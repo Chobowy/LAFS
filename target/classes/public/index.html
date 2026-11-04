@@ -1,1 +1,107 @@
 <h1>ZUT Lost and Found</h1>
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>ZUT Lost &amp; Found</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 900px; margin: 20px auto; padding: 0 10px; }
+        input, select, button { padding: 6px; margin: 3px; }
+        .card { border: 1px solid #ccc; border-radius: 6px; padding: 8px; margin: 6px 0; }
+        .returned { opacity: 0.5; }
+    </style>
+</head>
+<body>
+<h1>ZUT Campus Lost &amp; Found</h1>
+
+<h2>Report an item</h2>
+<select id="kind">
+    <option value="lost">I lost something</option>
+    <option value="found">I found something</option>
+</select>
+<input id="name" placeholder="Item name">
+<input id="category" placeholder="Category (ID, phone, keys...)">
+<input id="location" placeholder="Location">
+<input id="extra" placeholder="Your contact / where it is kept">
+<button onclick="report()">Submit</button>
+
+<h2>Items</h2>
+<input id="search" placeholder="Search...">
+<button onclick="load()">Search</button>
+<div id="items"></div>
+
+<h2>Dean of Students office</h2>
+<input id="adminId" placeholder="Admin ID" value="ADMIN01">
+<button onclick="loadClaims()">Refresh claims</button>
+<div id="claims"></div>
+
+<script>
+    const JSON_HEADERS = { 'Content-Type': 'application/json' };
+
+    function val(id) { return document.getElementById(id).value.trim(); }
+    function esc(s) {
+        return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    async function report() {
+        const kind = val('kind');
+        const body = { name: val('name'), category: val('category'), location: val('location'), date: '' };
+        if (kind === 'lost') body.ownerContact = val('extra');
+        else body.storedAt = val('extra');
+        const res = await fetch('/api/' + kind, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(body) });
+        if (!res.ok) alert((await res.json()).error);
+        load();
+    }
+
+    async function load() {
+        const q = val('search');
+        const res = await fetch('/api/items' + (q ? '?q=' + encodeURIComponent(q) : ''));
+        const items = await res.json();
+        document.getElementById('items').innerHTML = items.map(i => `
+    <div class="card ${i.returned ? 'returned' : ''}">
+      <b>${esc(i.summary)}</b><br>${esc(i.category)} | ${esc(i.date)}
+      ${i.returned
+            ? '<br><i>Returned to owner</i>'
+            : `<br><button onclick="claim(${i.id})">Claim</button>
+           <button onclick="removeItem(${i.id})">Delete (admin)</button>`}
+    </div>`).join('');
+    }
+
+    async function claim(id) {
+        const studentId = prompt('Your student ID number:');
+        if (!studentId) return;
+        const proof = prompt('Proof of ownership (describe the item or details only the owner knows):');
+        const res = await fetch('/api/claims', {
+            method: 'POST', headers: JSON_HEADERS,
+            body: JSON.stringify({ itemId: id, studentId: studentId, proof: proof })
+        });
+        alert(res.ok ? 'Claim submitted. The Dean of Students office will review it.' : (await res.json()).error);
+    }
+
+    async function removeItem(id) {
+        const res = await fetch('/api/items/' + id + '?adminId=' + encodeURIComponent(val('adminId')), { method: 'DELETE' });
+        if (!res.ok) alert((await res.json()).error);
+        load();
+    }
+
+    async function loadClaims() {
+        const claims = await (await fetch('/api/claims')).json();
+        document.getElementById('claims').innerHTML = claims.map(c => `
+    <div class="card">
+      Claim #${c.id} on item ${c.itemId} by student ${esc(c.claimantStudentId)}<br>
+      Proof: ${esc(c.proof)}<br>Status: <b>${c.status}</b>
+      ${c.status === 'PENDING' ? `<br><button onclick="approve(${c.id})">Approve</button>` : ''}
+    </div>`).join('');
+    }
+
+    async function approve(id) {
+        const res = await fetch('/api/claims/' + id + '/approve?adminId=' + encodeURIComponent(val('adminId')), { method: 'PUT' });
+        if (!res.ok) alert((await res.json()).error);
+        load();
+        loadClaims();
+    }
+
+    load();
+</script>
+</body>
+</html>
